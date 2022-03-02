@@ -1,6 +1,11 @@
 #include <benchmark/benchmark.h>
 #include <stdlib.h>
 
+#define no_auto_vectorize                                                      \
+    _Pragma("clang loop vectorize(disable) interleave(disable)")
+#define auto_vectorize                                                         \
+    _Pragma("clang loop vectorize(enable) interleave(enable)")
+
 static int *prepare_array(int N) {
     int *arr = (int *)malloc(sizeof(int) * N);
 
@@ -11,21 +16,40 @@ static int *prepare_array(int N) {
     return arr;
 }
 
+#define SUM_UNROLL_IMPL(UNROLL_FACTOR)                                         \
+    int sum_unroll_##UNROLL_FACTOR##x(int *arr, int N) {                       \
+        int res = 0;                                                           \
+                                                                               \
+        constexpr int M = UNROLL_FACTOR;                                       \
+                                                                               \
+        int i;                                                                 \
+        no_auto_vectorize for (i = 0; i < N; i += M) {                         \
+            for (int j = 0; j < M; j++) {                                      \
+                res += arr[i + j];                                             \
+            }                                                                  \
+        }                                                                      \
+                                                                               \
+        for (i -= M; i < N; i++) {                                             \
+            res += arr[i];                                                     \
+        }                                                                      \
+                                                                               \
+        return res;                                                            \
+    }
+
+SUM_UNROLL_IMPL(4)
+SUM_UNROLL_IMPL(8)
+SUM_UNROLL_IMPL(16)
+SUM_UNROLL_IMPL(32)
+
 int sum_naive(int *arr, int N) {
     int res = 0;
-#pragma clang loop vectorize(disable) interleave(disable)
-    for (int i = 0; i < N; i++) {
-        res += arr[i];
-    }
+    no_auto_vectorize for (int i = 0; i < N; i++) { res += arr[i]; }
     return res;
 }
 
 int sum_auto_vec(int *arr, int N) {
     int res = 0;
-#pragma clang loop vectorize(enable) interleave(enable)
-    for (int i = 0; i < N; i++) {
-        res += arr[i];
-    }
+    auto_vectorize for (int i = 0; i < N; i++) { res += arr[i]; }
     return res;
 }
 
@@ -44,7 +68,11 @@ int sum_auto_vec(int *arr, int N) {
     }                                                                          \
     BENCHMARK(bench_##NAME)->Arg(10)->Arg(1000)->Arg(10000)->Arg(1000000)
 
+BENCH_SUM(unroll_4x);
+BENCH_SUM(unroll_8x);
+BENCH_SUM(unroll_16x);
+BENCH_SUM(unroll_32x);
 BENCH_SUM(naive);
-BENCH_SUM(auto_vec);
+//BENCH_SUM(auto_vec);
 
 BENCHMARK_MAIN();
