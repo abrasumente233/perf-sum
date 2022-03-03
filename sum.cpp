@@ -1,6 +1,7 @@
 #include <benchmark/benchmark.h>
 #include <stdlib.h>
-#include <arm_neon.h>
+
+//#define VALIDATION
 
 #define no_auto_vectorize                                                      \
     _Pragma("clang loop vectorize(disable) interleave(disable)")
@@ -16,12 +17,15 @@ static int *prepare_array(int N) {
     return arr;
 }
 
+#ifdef __ARM_NEON
+#include <arm_neon.h>
+
 int sum_neon_4x(int *arr, int N) {
     constexpr int M = 4; // unroll factor
     int res = 0;
 
     int i;
-    no_auto_vectorize for (i = 0; i < N; i += M, arr += 4) {
+    no_auto_vectorize for (i = 0; i < N; i += M, arr += M) {
         int32x4_t four_ints = vld1q_s32(arr);
         int32_t acc = vaddvq_s32(four_ints);
         res += acc;
@@ -31,6 +35,7 @@ int sum_neon_4x(int *arr, int N) {
 
     return res;
 }
+#endif
 
 #define SUM_UNROLL_IMPL(UNROLL_FACTOR)                                         \
     int sum_unroll_##UNROLL_FACTOR##x(int *arr, int N) {                       \
@@ -39,13 +44,14 @@ int sum_neon_4x(int *arr, int N) {
         constexpr int M = UNROLL_FACTOR;                                       \
                                                                                \
         int i;                                                                 \
-        no_auto_vectorize for (i = 0; i < N; i += M) {                         \
+        int lim = N - N % M;                                                   \
+        no_auto_vectorize for (i = 0; i < lim; i += M) {                       \
             for (int j = 0; j < M; j++) {                                      \
                 res += arr[i + j];                                             \
             }                                                                  \
         }                                                                      \
                                                                                \
-        for (i -= M; i < N; i++) {                                             \
+        for (; i < N; i++) {                                                   \
             res += arr[i];                                                     \
         }                                                                      \
                                                                                \
@@ -84,20 +90,40 @@ int sum_auto_vec(int *arr, int N) {
     }                                                                          \
     BENCHMARK(bench_##NAME)->Arg(10)->Arg(1000)->Arg(10000)->Arg(1000000)
 
+#ifdef __ARM_NEON
 BENCH_SUM(neon_4x);
+#endif
+
 BENCH_SUM(unroll_4x);
 //BENCH_SUM(unroll_8x);
 //BENCH_SUM(unroll_16x);
 //BENCH_SUM(unroll_32x);
-//BENCH_SUM(naive);
+BENCH_SUM(naive);
 //BENCH_SUM(auto_vec);
 
-BENCHMARK_MAIN();
+#ifdef VALIDATION
+#include <assert.h>
+#define assert_eq(LHS, RHS)                                                    \
+    do {                                                                       \
+        if ((LHS) != (RHS)) {                                                  \
+            fprintf(stderr, "lhs: %d != rhs: %d\n", LHS, RHS);                 \
+            assert((LHS) == (RHS) && "assert_eq failed.");                     \
+        }                                                                      \
+    } while (0)
 
-/*
 int main() {
-    int *arr = prepare_array(1000);
-    int res = sum_neno_4x(arr, 1000);
-    printf("%d\n", res);
+    constexpr int N = 1000;
+    int *arr = prepare_array(N);
+    int ground_truth = sum_naive(arr, N);
+
+    assert_eq(ground_truth, sum_neon_4x(arr, N));
+    assert_eq(ground_truth, sum_unroll_4x(arr, N));
+    assert_eq(ground_truth, sum_unroll_8x(arr, N));
+    assert_eq(ground_truth, sum_unroll_16x(arr, N));
+    assert_eq(ground_truth, sum_auto_vec(arr, N));
+
+    printf("Tests passed!\n");
 }
-*/
+#else
+BENCHMARK_MAIN();
+#endif
